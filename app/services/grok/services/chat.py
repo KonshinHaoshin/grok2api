@@ -114,10 +114,16 @@ class MessageExtractor:
         tools: List[Dict[str, Any]] = None,
         tool_choice: Any = None,
         parallel_tool_calls: bool = True,
-    ) -> tuple[str, List[str], List[str]]:
-        """从 OpenAI 消息格式提取内容，返回 (text, file_attachments, image_attachments)"""
+    ) -> tuple[str, List[str], List[str], str]:
+        """从 OpenAI 消息格式提取内容，返回 (text, file_attachments, image_attachments, tool_prompt)"""
         # Pre-process: convert tool-related messages to text format
-        if tools:
+        # 即使本轮 tools=None，只要历史中有 tool 消息或 assistant+tool_calls，也需要转换
+        needs_tool_history = tools or any(
+            m.get("role") == "tool" or
+            (m.get("role") == "assistant" and m.get("tool_calls"))
+            for m in messages
+        )
+        if needs_tool_history:
             messages = format_tool_history(messages)
 
         texts = []
@@ -187,7 +193,7 @@ class MessageExtractor:
 
             # 保留工具调用轨迹，避免部分客户端在多轮工具会话中丢失上下文顺序
             tool_calls = msg.get("tool_calls")
-            if role == "assistant" and not parts and isinstance(tool_calls, list):
+            if role == "assistant" and isinstance(tool_calls, list):
                 for call in tool_calls:
                     if not isinstance(call, dict):
                         continue
@@ -240,13 +246,12 @@ class MessageExtractor:
         if (not combined.strip()) and (file_attachments or image_attachments):
             combined = "Refer to the following content:"
 
-        # Prepend tool system prompt if tools are provided
+        # Build tool system prompt if tools are provided (injected via customPersonality, not prepended)
+        tool_prompt = ""
         if tools:
             tool_prompt = build_tool_prompt(tools, tool_choice, parallel_tool_calls)
-            if tool_prompt:
-                combined = f"{tool_prompt}\n\n{combined}"
 
-        return combined, file_attachments, image_attachments
+        return combined, file_attachments, image_attachments, tool_prompt
 
 
 class GrokChatService:
@@ -261,6 +266,7 @@ class GrokChatService:
         stream: bool = None,
         file_attachments: List[str] = None,
         tool_overrides: Dict[str, Any] = None,
+        tool_prompt: str = None,
         model_config_override: Dict[str, Any] = None,
     ):
         """发送聊天请求"""
@@ -284,6 +290,7 @@ class GrokChatService:
                 mode=mode,
                 file_attachments=file_attachments,
                 tool_overrides=tool_overrides,
+                tool_prompt=tool_prompt,
                 model_config_override=model_config_override,
             )
             logger.info(f"Chat connected: model={model}, stream={stream}")
@@ -325,7 +332,7 @@ class GrokChatService:
         grok_model = model_info.grok_model
         mode = model_info.model_mode
         # 提取消息和附件
-        message, file_attachments, image_attachments = MessageExtractor.extract(
+        message, file_attachments, image_attachments, tool_prompt = MessageExtractor.extract(
             messages, tools=tools, tool_choice=tool_choice, parallel_tool_calls=parallel_tool_calls
         )
         logger.debug(
@@ -370,6 +377,7 @@ class GrokChatService:
             stream,
             file_attachments=all_attachments,
             tool_overrides=None,
+            tool_prompt=tool_prompt,
             model_config_override=model_config_override,
         )
 

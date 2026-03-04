@@ -749,6 +749,9 @@ async def chat_completions(request: ChatCompletionRequest):
         )
 
     if model_info and model_info.is_image:
+        # 图片生成不支持工具调用，显式清除防止意外污染
+        request.tools = None
+        request.tool_choice = None
         prompt, _ = _extract_prompt_images(request.messages)
 
         is_stream = (
@@ -813,6 +816,9 @@ async def chat_completions(request: ChatCompletionRequest):
         )
 
     if model_info and model_info.is_video:
+        # 视频生成不支持工具调用，显式清除防止意外污染
+        request.tools = None
+        request.tool_choice = None
         # 提取视频配置 (默认值在 Pydantic 模型中处理)
         v_conf = request.video_config or VideoConfig()
 

@@ -53,6 +53,7 @@ class AppChatReverse:
         file_attachments: List[str] = None,
         tool_overrides: Dict[str, Any] = None,
         model_config_override: Dict[str, Any] = None,
+        tool_prompt: str = None,
     ) -> Dict[str, Any]:
         """Build chat payload for Grok app-chat API."""
 
@@ -95,7 +96,12 @@ class AppChatReverse:
         }
 
         custom_personality = AppChatReverse._resolve_custom_personality()
-        if custom_personality is not None:
+        if tool_prompt:
+            if custom_personality:
+                payload["customPersonality"] = f"{tool_prompt}\n\n{custom_personality}"
+            else:
+                payload["customPersonality"] = tool_prompt
+        elif custom_personality is not None:
             payload["customPersonality"] = custom_personality
 
         if model_config_override:
@@ -113,6 +119,7 @@ class AppChatReverse:
         file_attachments: List[str] = None,
         tool_overrides: Dict[str, Any] = None,
         model_config_override: Dict[str, Any] = None,
+        tool_prompt: str = None,
     ) -> Any:
         """Send app chat request to Grok.
         
@@ -164,6 +171,7 @@ class AppChatReverse:
                 file_attachments=file_attachments,
                 tool_overrides=tool_overrides,
                 model_config_override=model_config_override,
+                tool_prompt=tool_prompt,
             )
             try:
                 payload_log = orjson.dumps(payload).decode("utf-8")
