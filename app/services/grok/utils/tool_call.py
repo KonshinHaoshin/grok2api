@@ -214,6 +214,21 @@ def parse_tool_call_block(
     }
 
 
+def _normalize_tool_arguments(arguments: Any) -> Optional[str]:
+    if isinstance(arguments, str):
+        parsed_args = None
+        try:
+            parsed_args = json.loads(arguments)
+        except json.JSONDecodeError:
+            parsed_args = _repair_json(arguments)
+        if parsed_args is None:
+            return None
+        return json.dumps(parsed_args, ensure_ascii=False)
+    if isinstance(arguments, (dict, list, int, float, bool)) or arguments is None:
+        return json.dumps(arguments, ensure_ascii=False)
+    return None
+
+
 def parse_tool_calls(
     content: str,
     tools: Optional[List[Dict[str, Any]]] = None,
@@ -294,9 +309,19 @@ def format_tool_history(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             for tc in tool_calls:
                 func = tc.get("function", {})
                 tc_name = func.get("name", "")
-                tc_args = func.get("arguments", "{}")
+                tc_args = _normalize_tool_arguments(func.get("arguments", {}))
+                if tc_args is None:
+                    tc_args = "{}"
                 tc_id = tc.get("id", "")
-                parts.append(f'<tool_call>{{"name":"{tc_name}","arguments":{tc_args}}}</tool_call>')
+                payload = {
+                    "name": tc_name,
+                    "arguments": json.loads(tc_args),
+                }
+                if tc_id:
+                    payload["id"] = tc_id
+                parts.append(
+                    f"<tool_call>{json.dumps(payload, ensure_ascii=False)}</tool_call>"
+                )
             result.append({
                 "role": "assistant",
                 "content": "\n".join(parts),
@@ -306,10 +331,19 @@ def format_tool_history(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             # Convert tool result to text format
             tool_name = name or "unknown"
             call_id = tool_call_id or ""
-            content_str = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False) if content else ""
+            content_str = (
+                content
+                if isinstance(content, str)
+                else json.dumps(content, ensure_ascii=False) if content else ""
+            )
+            payload = {
+                "tool_call_id": call_id,
+                "name": tool_name,
+                "output": content_str,
+            }
             result.append({
                 "role": "user",
-                "content": f"tool ({tool_name}, {call_id}): {content_str}",
+                "content": f"<tool_result>{json.dumps(payload, ensure_ascii=False)}</tool_result>",
             })
 
         else:

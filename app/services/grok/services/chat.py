@@ -530,9 +530,14 @@ class StreamProcessor(proc_base.BaseProcessor):
         self._tool_partial = ""
         self._tool_calls_seen = False
         self._tool_call_index = 0
+        client_profile = str(
+            get_config("compat.client_profile", "generic") or "generic"
+        ).strip().lower()
         self._stream_tool_calls_enabled = bool(
             get_config("compat.stream_tool_calls", False)
         )
+        if client_profile == "openclaw":
+            self._stream_tool_calls_enabled = False
         self._pending_tool_calls: list[dict[str, Any]] = []
 
     def _with_tool_index(self, tool_call: Any) -> Any:
@@ -666,9 +671,13 @@ class StreamProcessor(proc_base.BaseProcessor):
             self._tool_buffer += data[:end_idx]
             data = data[end_idx + len(end_tag) :]
             tool_call = parse_tool_call_block(self._tool_buffer, self.tools)
+            raw_tool_block = self._tool_buffer
             if tool_call:
                 events.append(("tool", self._with_tool_index(tool_call)))
                 self._tool_calls_seen = True
+            logger.debug(
+                f"tool_stream_block: valid={bool(tool_call)} raw={raw_tool_block[:300]!r} parsed={tool_call}"
+            )
             self._tool_buffer = ""
             self._tool_state = "text"
 
@@ -862,8 +871,12 @@ class StreamProcessor(proc_base.BaseProcessor):
                         else:
                             self._pending_tool_calls.append(payload)
                 if self._pending_tool_calls:
+                    logger.debug(
+                        f"tool_stream_buffered_calls: count={len(self._pending_tool_calls)}"
+                    )
                     yield self._sse(tool_calls=self._pending_tool_calls)
                 finish_reason = "tool_calls" if self._tool_calls_seen else "stop"
+                logger.debug(f"tool_stream_finish_reason: {finish_reason}")
                 yield self._sse(finish=finish_reason)
             else:
                 yield self._sse(finish="stop")
@@ -1076,11 +1089,18 @@ class CollectProcessor(proc_base.BaseProcessor):
         finish_reason = "stop"
         tool_calls_result = None
         if self.tools and self.tool_choice != "none":
+            logger.debug(
+                f"collect_tool_parse_input_len={len(content or '')}"
+            )
             text_content, tool_calls_list = parse_tool_calls(content, self.tools)
             if tool_calls_list:
                 tool_calls_result = tool_calls_list
                 content = text_content  # May be None
                 finish_reason = "tool_calls"
+                logger.debug(
+                    f"collect_tool_parse_result: count={len(tool_calls_list)} parsed={tool_calls_list}"
+                )
+        logger.debug(f"collect_finish_reason: {finish_reason}")
 
         message_obj = {
             "role": "assistant",

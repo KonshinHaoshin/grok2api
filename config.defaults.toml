@@ -200,4 +200,5 @@ tool_call_mode = "strict"
 # 是否在流式输出中发送 tool_calls 增量（默认关闭，优先兼容）
 stream_tool_calls = false
 # 客户端配置（generic/openclaw/cursor）
+# 当为 openclaw 时，会强制关闭流式 tool_calls 增量
 client_profile = "generic"
