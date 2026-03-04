@@ -193,12 +193,19 @@ def parse_tool_call_block(
     if valid_names and name not in valid_names:
         return None
 
-    if isinstance(arguments, dict):
+    if isinstance(arguments, str):
+        parsed_args = None
+        try:
+            parsed_args = json.loads(arguments)
+        except json.JSONDecodeError:
+            parsed_args = _repair_json(arguments)
+        if parsed_args is None:
+            return None
+        arguments_str = json.dumps(parsed_args, ensure_ascii=False)
+    elif isinstance(arguments, (dict, list, int, float, bool)) or arguments is None:
         arguments_str = json.dumps(arguments, ensure_ascii=False)
-    elif isinstance(arguments, str):
-        arguments_str = arguments
     else:
-        arguments_str = json.dumps(arguments, ensure_ascii=False)
+        return None
 
     return {
         "id": f"call_{uuid.uuid4().hex[:24]}",
@@ -233,28 +240,28 @@ def parse_tool_calls(
         return content, None
 
     tool_calls = []
-    for match in matches:
-        raw_json = match.group(1).strip()
-        tool_call = parse_tool_call_block(raw_json, tools)
-        if tool_call:
-            tool_calls.append(tool_call)
-
-    if not tool_calls:
-        return content, None
-
-    # Extract text outside of tool_call blocks
     text_parts = []
     last_end = 0
     for match in matches:
         before = content[last_end:match.start()]
-        if before.strip():
-            text_parts.append(before.strip())
+        if before:
+            text_parts.append(before)
+        raw_json = match.group(1).strip()
+        tool_call = parse_tool_call_block(raw_json, tools)
+        if tool_call:
+            tool_calls.append(tool_call)
+        else:
+            # Keep invalid tool blocks in assistant text to avoid accidental tool stripping.
+            text_parts.append(match.group(0))
         last_end = match.end()
     trailing = content[last_end:]
-    if trailing.strip():
-        text_parts.append(trailing.strip())
+    if trailing:
+        text_parts.append(trailing)
 
-    text_content = "\n".join(text_parts) if text_parts else None
+    if not tool_calls:
+        return content, None
+
+    text_content = "".join(text_parts).strip() if text_parts else None
 
     return text_content, tool_calls
 

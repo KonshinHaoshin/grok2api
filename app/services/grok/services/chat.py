@@ -530,6 +530,10 @@ class StreamProcessor(proc_base.BaseProcessor):
         self._tool_partial = ""
         self._tool_calls_seen = False
         self._tool_call_index = 0
+        self._stream_tool_calls_enabled = bool(
+            get_config("compat.stream_tool_calls", False)
+        )
+        self._pending_tool_calls: list[dict[str, Any]] = []
 
     def _with_tool_index(self, tool_call: Any) -> Any:
         if not isinstance(tool_call, dict):
@@ -684,7 +688,10 @@ class StreamProcessor(proc_base.BaseProcessor):
             events.append(("tool", self._with_tool_index(tool_call)))
             self._tool_calls_seen = True
         elif raw:
-            events.append(("text", f"<tool_call>{raw}"))
+            logger.warning(
+                "Dropping invalid trailing tool_call block in stream response",
+                extra={"model": self.model},
+            )
         self._tool_buffer = ""
         self._tool_partial = ""
         self._tool_state = "text"
@@ -834,7 +841,10 @@ class StreamProcessor(proc_base.BaseProcessor):
                             if kind == "text":
                                 yield self._sse(payload)
                             elif kind == "tool":
-                                yield self._sse(tool_calls=[payload])
+                                if self._stream_tool_calls_enabled:
+                                    yield self._sse(tool_calls=[payload])
+                                else:
+                                    self._pending_tool_calls.append(payload)
                         continue
 
                     yield self._sse(filtered)
@@ -847,7 +857,12 @@ class StreamProcessor(proc_base.BaseProcessor):
                     if kind == "text":
                         yield self._sse(payload)
                     elif kind == "tool":
-                        yield self._sse(tool_calls=[payload])
+                        if self._stream_tool_calls_enabled:
+                            yield self._sse(tool_calls=[payload])
+                        else:
+                            self._pending_tool_calls.append(payload)
+                if self._pending_tool_calls:
+                    yield self._sse(tool_calls=self._pending_tool_calls)
                 finish_reason = "tool_calls" if self._tool_calls_seen else "stop"
                 yield self._sse(finish=finish_reason)
             else:

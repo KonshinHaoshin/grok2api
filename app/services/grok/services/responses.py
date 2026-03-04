@@ -410,6 +410,7 @@ class ResponseStreamAdapter:
         self.output_text_parts: List[str] = []
         self.tool_calls_by_index: Dict[int, Dict[str, Any]] = {}
         self.tool_items: Dict[int, Dict[str, Any]] = {}
+        self.tool_call_ids_by_index: Dict[int, str] = {}
         self.next_output_index = 0
         self.content_index = 0
         self.message_id = _new_message_id()
@@ -453,6 +454,14 @@ class ResponseStreamAdapter:
         idx = self.next_output_index
         self.next_output_index += 1
         return idx
+
+    def resolve_tool_call_id(self, tool_index: int, candidate: Optional[str] = None) -> str:
+        existing = self.tool_call_ids_by_index.get(tool_index)
+        if existing:
+            return existing
+        call_id = candidate or _new_tool_call_id()
+        self.tool_call_ids_by_index[tool_index] = call_id
+        return call_id
 
     def created_event(self) -> str:
         payload = {
@@ -556,6 +565,8 @@ class ResponseStreamAdapter:
             item = self.tool_items[tool_index]
             if name and not item.get("name"):
                 item["name"] = name
+            if not item.get("call_id"):
+                item["call_id"] = call_id
             return []
         output_index = self._alloc_output_index()
         item_id = _new_function_call_id()
@@ -720,8 +731,10 @@ class ResponsesService:
                 raise ValueError("Unexpected stream response for non-stream request")
             choice = (result.get("choices") or [{}])[0]
             message = choice.get("message") or {}
-            content = message.get("content") or ""
             tool_calls = message.get("tool_calls")
+            content = message.get("content")
+            if content is None and not tool_calls:
+                content = ""
             return _build_response_object(
                 model=model,
                 output_text=content,
@@ -792,8 +805,14 @@ class ResponsesService:
                         for tool in tool_calls:
                             if not isinstance(tool, dict):
                                 continue
-                            tool_index = tool.get("index", 0)
-                            call_id = tool.get("id") or _new_tool_call_id()
+                            raw_index = tool.get("index", 0)
+                            try:
+                                tool_index = int(raw_index)
+                            except (TypeError, ValueError):
+                                tool_index = 0
+                            call_id = adapter.resolve_tool_call_id(
+                                tool_index, tool.get("id")
+                            )
                             fn = tool.get("function") or {}
                             name = fn.get("name")
                             args_delta = fn.get("arguments") or ""

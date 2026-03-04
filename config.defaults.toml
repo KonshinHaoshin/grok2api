@@ -192,3 +192,12 @@ concurrent = 100
 batch_size = 50
 # Usage 请求超时时间（秒）
 timeout = 60
+
+# ==================== 兼容配置 ====================
+[compat]
+# tool call 输出模式（strict: 严格 OpenAI tool_calls 协议）
+tool_call_mode = "strict"
+# 是否在流式输出中发送 tool_calls 增量（默认关闭，优先兼容）
+stream_tool_calls = false
+# 客户端配置（generic/openclaw/cursor）
+client_profile = "generic"
