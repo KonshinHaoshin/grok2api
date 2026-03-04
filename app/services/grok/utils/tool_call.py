@@ -10,6 +10,15 @@ import re
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
+from app.core.config import get_config
+
+
+def _tool_call_mode() -> str:
+    mode = str(get_config("compat.tool_call_mode", "strict") or "strict").strip().lower()
+    if mode in {"strict", "compatible", "relaxed"}:
+        return mode
+    return "strict"
+
 
 def build_tool_prompt(
     tools: List[Dict[str, Any]],
@@ -126,6 +135,8 @@ def _balance_braces(text: str) -> str:
         return text
     open_count = 0
     close_count = 0
+    open_bracket = 0
+    close_bracket = 0
     in_string = False
     escape = False
     for ch in text:
@@ -144,6 +155,12 @@ def _balance_braces(text: str) -> str:
             open_count += 1
         elif ch == "}":
             close_count += 1
+        elif ch == "[":
+            open_bracket += 1
+        elif ch == "]":
+            close_bracket += 1
+    if open_bracket > close_bracket:
+        text = text + ("]" * (open_bracket - close_bracket))
     if open_count > close_count:
         text = text + ("}" * (open_count - close_count))
     return text
@@ -167,9 +184,12 @@ def _repair_json(text: str) -> Optional[Any]:
 def parse_tool_call_block(
     raw_json: str,
     tools: Optional[List[Dict[str, Any]]] = None,
+    mode: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     if not raw_json:
         return None
+    if mode is None:
+        mode = _tool_call_mode()
     parsed = None
     try:
         parsed = json.loads(raw_json)
@@ -200,12 +220,20 @@ def parse_tool_call_block(
         except json.JSONDecodeError:
             parsed_args = _repair_json(arguments)
         if parsed_args is None:
-            return None
-        arguments_str = json.dumps(parsed_args, ensure_ascii=False)
-    elif isinstance(arguments, (dict, list, int, float, bool)) or arguments is None:
+            # In compatible/relaxed mode keep raw string to avoid dropping tool calls.
+            if mode == "strict":
+                return None
+            arguments_str = arguments.strip() or "{}"
+        else:
+            arguments_str = json.dumps(parsed_args, ensure_ascii=False)
+    elif isinstance(arguments, (dict, list, int, float, bool)):
         arguments_str = json.dumps(arguments, ensure_ascii=False)
+    elif arguments is None:
+        arguments_str = "{}"
     else:
-        return None
+        if mode == "strict":
+            return None
+        arguments_str = json.dumps({"value": str(arguments)}, ensure_ascii=False)
 
     return {
         "id": f"call_{uuid.uuid4().hex[:24]}",
@@ -224,8 +252,10 @@ def _normalize_tool_arguments(arguments: Any) -> Optional[str]:
         if parsed_args is None:
             return None
         return json.dumps(parsed_args, ensure_ascii=False)
-    if isinstance(arguments, (dict, list, int, float, bool)) or arguments is None:
+    if isinstance(arguments, (dict, list, int, float, bool)):
         return json.dumps(arguments, ensure_ascii=False)
+    if arguments is None:
+        return "{}"
     return None
 
 
@@ -254,6 +284,7 @@ def parse_tool_calls(
     if not matches:
         return content, None
 
+    mode = _tool_call_mode()
     tool_calls = []
     text_parts = []
     last_end = 0
@@ -262,7 +293,7 @@ def parse_tool_calls(
         if before:
             text_parts.append(before)
         raw_json = match.group(1).strip()
-        tool_call = parse_tool_call_block(raw_json, tools)
+        tool_call = parse_tool_call_block(raw_json, tools, mode=mode)
         if tool_call:
             tool_calls.append(tool_call)
         else:

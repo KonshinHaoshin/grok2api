@@ -195,7 +195,10 @@ timeout = 60
 
 # ==================== 兼容配置 ====================
 [compat]
-# tool call 输出模式（strict: 严格 OpenAI tool_calls 协议）
+# tool call 输出模式（strict/compatible/relaxed）
+# strict: arguments 必须是可解析 JSON，否则丢弃该 tool call
+# compatible: 保留不可解析 arguments 原文，优先保证工具链不断
+# relaxed: 与 compatible 行为一致（预留）
 tool_call_mode = "strict"
 # 是否在流式输出中发送 tool_calls 增量（默认关闭，优先兼容）
 stream_tool_calls = false
